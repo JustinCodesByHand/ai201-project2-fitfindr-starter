@@ -60,17 +60,52 @@ def search_listings(
         id, title, description, category, style_tags (list), size,
         condition, price (float), colors (list), brand, platform
 
-    TODO:
-        1. Load all listings with load_listings().
-        2. Filter by max_price and size (if provided).
-        3. Score each remaining listing by keyword overlap with `description`.
-        4. Drop any listings with a score of 0 (no relevant matches).
-        5. Sort by score, highest first, and return the listing dicts.
-
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    # Step 1: Load every listing from the JSON file into a Python list
+    # load_listings() returns a list of dicts — each dict is one item for sale
+    # Example: all_listings[0] is {"id": "lst_001", "title": "Vintage Levi's...", "price": 38.0, ...}
+    all_listings = load_listings()
+
+    # Step 2: Keep only listings whose price is at or below max_price
+    # Skip this filter entirely if max_price is None (user didn't set a price limit)
+    # listing["price"] is a float — compare it to max_price
+    if max_price is not None:
+        all_listings = [l for l in all_listings if l["price"] <= max_price]
+
+    # Step 3: Keep only listings whose size contains the size the user asked for
+    # Skip this filter entirely if size is None
+    # listing["size"] is a string like "S/M" — use .lower() on both sides so "m" matches "S/M"
+    if size is not None:
+        all_listings = [l for l in all_listings if size.lower() in l["size"].lower()]
+
+    # Step 4: Score each remaining listing by how many of the user's keywords appear in it
+    # Split description into individual words: description.lower().split()
+    # For each listing, count how many of those words appear in listing["title"].lower()
+    #   or listing["description"].lower() or anywhere in listing["style_tags"]
+    # Store each listing + its score together so you can sort later
+    # Hint: build a list of tuples like [(score, listing), (score, listing), ...]
+    keywords = description.lower().split()
+    scored = []
+    for listing in all_listings:
+        searchable = (
+            listing["title"].lower()
+            + " " + listing["description"].lower()
+            + " " + " ".join(listing["style_tags"]).lower()
+        )
+        score = sum(1 for kw in keywords if kw in searchable)
+        scored.append((score, listing))
+
+    # Step 5: Drop any listings with a score of 0 — they matched no keywords at all
+    scored = [(score, listing) for score, listing in scored if score > 0]
+
+    # Step 6: Sort by score, highest first
+    # If you used tuples: sorted(..., reverse=True) then pull just the listing dict back out
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Step 7: Return the final list of listing dicts (not tuples — just the dicts)
+    # If nothing survived the filters, this returns [] — that is correct, do not raise
+    return [listing for _, listing in scored]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -100,8 +135,52 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    client = _get_groq_client()
+
+    # Step 1: Check whether wardrobe["items"] is empty
+    # wardrobe["items"] is a list of dicts — each dict has keys: id, name, category, colors, style_tags, notes
+    # Example: wardrobe["items"][0] is {"id": "w_001", "name": "Baggy straight-leg jeans", "category": "bottoms", ...}
+    items = wardrobe["items"]
+
+    if not items:
+        # Step 2: Wardrobe is empty — ask LLM for general styling advice
+        # Tell LLM about the new item and ask what kinds of pieces pair well with it
+        prompt = (
+            f"A user is considering buying this thrifted item:\n"
+            f"Name: {new_item['title']}\n"
+            f"Style: {', '.join(new_item['style_tags'])}\n"
+            f"Colors: {', '.join(new_item['colors'])}\n"
+            f"Category: {new_item['category']}\n\n"
+            f"They have no wardrobe entered yet. Give them 1-2 general outfit ideas — "
+            f"what kinds of pieces pair well with this item, what vibe it suits, "
+            f"and how they might style it. Be specific about garment types and aesthetics."
+        )
+    else:
+        # Step 3: Wardrobe has items — format them into a list for the prompt
+        # Build a readable string of wardrobe pieces so the LLM can name specific ones
+        # Each item in wardrobe["items"] has a "name" key — e.g. "Baggy straight-leg jeans, dark wash"
+        wardrobe_lines = "\n".join(
+            f"- {item['name']} ({item['category']})" for item in items
+        )
+        prompt = (
+            f"A user is considering buying this thrifted item:\n"
+            f"Name: {new_item['title']}\n"
+            f"Style: {', '.join(new_item['style_tags'])}\n"
+            f"Colors: {', '.join(new_item['colors'])}\n"
+            f"Category: {new_item['category']}\n\n"
+            f"Their current wardrobe includes:\n{wardrobe_lines}\n\n"
+            f"Suggest 1-2 complete outfit combinations using the new item paired with "
+            f"specific pieces from their wardrobe. Name the exact wardrobe pieces you're pairing. "
+            f"Be specific about the aesthetic and vibe of each outfit."
+        )
+
+    # Step 4: Call the LLM and return its response as a string
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    return response.choices[0].message.content
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -133,5 +212,32 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    # Step 1: Guard against empty outfit string — return an error message string, do NOT raise
+    # outfit.strip() removes whitespace — if nothing is left, the input is unusable
+    if not outfit or not outfit.strip():
+        return "Could not generate a fit card — outfit suggestion was empty."
+
+    # Step 2: Build a prompt giving the LLM the item details + outfit, asking for a caption
+    # new_item is a listing dict — access fields like new_item["title"], new_item["price"], new_item["platform"]
+    # The caption must mention item name, price, and platform once each, sound casual, not like a product description
+    prompt = (
+        f"Write a 2-4 sentence Instagram/TikTok caption for this thrifted outfit.\n\n"
+        f"The thrifted item: {new_item['title']} — ${new_item['price']:.2f} on {new_item['platform']}\n"
+        f"The full outfit: {outfit}\n\n"
+        f"Rules:\n"
+        f"- Sound like a real person posting an OOTD, not a product description\n"
+        f"- Mention the item name, price, and platform naturally (once each)\n"
+        f"- Capture the specific vibe of the outfit\n"
+        f"- Keep it 2-4 sentences\n"
+        f"- No hashtags"
+    )
+
+    # Step 3: Call the LLM with higher temperature so captions sound different each time
+    # temperature=0.9 makes the output more creative and varied vs the default 0.7
+    client = _get_groq_client()
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.9,
+    )
+    return response.choices[0].message.content

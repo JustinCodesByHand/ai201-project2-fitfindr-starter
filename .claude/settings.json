@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from tools import search_listings; r = search_listings\\('vintage graphic tee', max_price=30\\); print\\(len\\(r\\), 'results'\\); print\\(r[0]['title'] if r else 'none'\\)\")",
+      "Bash(venv/Scripts/python -c \"from tools import search_listings; r = search_listings\\('vintage graphic tee', max_price=30\\); print\\(len\\(r\\), 'results'\\); print\\(r[0]['title'] if r else 'none'\\)\")"
+    ]
+  }
+}
